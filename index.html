@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>ISS Live Tracker — Mejorado (v2)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg-start: #0f1419;
+      --bg-end: #1a2332;
+      --panel-bg: rgba(10,14,18,0.85);
+      --text: #ffffff;
+      --accent: #4facfe;
+      --muted: rgba(255,255,255,0.6);
+    }
+    [data-theme="light"]{
+      --bg-start: #ffffff;
+      --bg-end: #f3f6f9;
+      --panel-bg: rgba(255,255,255,0.95);
+      --text: #0b1220;
+      --accent: #0b6cff;
+      --muted: rgba(11,18,32,0.6);
+    }
+
+    /* Reset and base */
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body,#root{height:100%}
+    body{
+      font-family:'Inter',system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;
+      background: linear-gradient(135deg,var(--bg-start) 0%, var(--bg-end) 100%);
+      color:var(--text);
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+
+    .container{height:100vh;display:flex;flex-direction:column}
+    .header{display:flex;align-items:center;justify-content:space-between;padding:0.8rem 1rem;border-bottom:1px solid rgba(255,255,255,0.04);background:transparent}
+    .header-left{display:flex;gap:0.9rem;align-items:center}
+    .iss-logo{width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,var(--accent) 0%,#00f2fe 100%);display:flex;align-items:center;justify-content:center;font-weight:700}
+    .title{font-weight:700;font-size:1.05rem}
+    .subtitle{font-size:0.82rem;color:var(--muted);margin-top:2px}
+
+    .controls{display:flex;align-items:center;gap:0.6rem}
+    .btn{background:transparent;border:1px solid rgba(255,255,255,0.08);padding:0.35rem 0.6rem;border-radius:8px;color:var(--text);cursor:pointer;font-weight:600}
+    .btn.small{padding:0.25rem 0.5rem;font-size:0.85rem}
+
+    .main{flex:1;display:flex;gap:1rem;padding:1rem;align-items:stretch}
+    .map-column{flex:2;min-height:420px;display:flex;flex-direction:column;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.04)}
+    #map{width:100%;height:100%;display:block}
+
+    .right-column{flex:1;min-width:340px;display:flex;flex-direction:column;gap:1rem}
+    .info-panel{background:var(--panel-bg);backdrop-filter:blur(8px);border-radius:12px;padding:1rem;border:1px solid rgba(255,255,255,0.04)}
+    .info-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:0.9rem;margin-bottom:0.7rem}
+    .info-label{font-size:0.72rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.6px}
+    .info-value{font-size:1.05rem;font-weight:800;color:var(--text)}
+
+    .globe-container{background:linear-gradient(135deg,#071019 0%, #0e1621 100%);min-height:300px;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.04);display:flex;align-items:stretch}
+    #globe-canvas{width:100%;height:100%;display:block}
+
+    .status {display:flex;align-items:center;gap:0.5rem;font-weight:700;color:var(--muted)}
+
+    .theme-switch{display:flex;align-items:center;gap:0.5rem}
+    .region {font-weight:700;color:var(--accent);font-size:1rem}
+
+    @media (max-width:900px){
+      .main{flex-direction:column;padding:0.6rem}
+      .right-column{order:2}
+      .map-column{order:1;min-height:300px}
+    }
+
+    /* Leaflet tweaks */
+    .leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel-bg);color:var(--text);border-radius:8px;backdrop-filter:blur(6px)}
+    .iss-marker-ui{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--accent);box-shadow:0 8px 26px rgba(79,172,254,0.18)}
+  </style>
+</head>
+<body data-theme="dark">
+  <div class="container" id="root">
+    <header class="header" role="banner">
+      <div class="header-left">
+        <div class="iss-logo" aria-hidden="true">🛰️</div>
+        <div>
+          <div class="title">ISS Live Tracker</div>
+          <div class="subtitle">Estación Espacial Internacional — visualizador</div>
+        </div>
+      </div>
+      <div class="controls">
+        <div class="theme-switch">
+          <button id="toggleTheme" class="btn small" title="Cambiar tema">Tema: <span id="themeLabel">Oscuro</span></button>
+        </div>
+        <button id="centerMap" class="btn small" title="Centrar en ISS">Centrar ISS</button>
+      </div>
+    </header>
+
+    <main class="main" role="main">
+      <section class="map-column" aria-label="Mapa global">
+        <div id="map" role="region" aria-label="Mapa del mundo"></div>
+      </section>
+
+      <aside class="right-column" aria-label="Panel derecho">
+        <div class="info-panel" id="infoPanel" role="complementary" aria-live="polite">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.6rem">
+            <div style="font-weight:800">Información</div>
+            <div class="status" id="statusText">Cargando…</div>
+          </div>
+
+          <div id="infoContent">
+            <div class="info-grid">
+              <div><div class="info-label">Latitud</div><div class="info-value" id="lat">-</div></div>
+              <div><div class="info-label">Longitud</div><div class="info-value" id="lon">-</div></div>
+              <div><div class="info-label">Altitud</div><div class="info-value" id="alt">-</div></div>
+              <div><div class="info-label">Velocidad</div><div class="info-value" id="vel">-</div></div>
+            </div>
+            <div style="border-top:1px solid rgba(255,255,255,0.04);padding-top:0.6rem">
+              <div class="info-label">Sobrevolando</div>
+              <div class="region" id="region">-</div>
+            </div>
+            <div style="margin-top:0.8rem;font-size:0.85rem;color:var(--muted)" id="updatedAt">-</div>
+          </div>
+        </div>
+
+        <div class="globe-container" title="Globo 3D">
+          <canvas id="globe-canvas" role="img" aria-label="Globo 3D mostrando la ISS"></canvas>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Dependencias -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <script>
+  (function () {
+    // Config
+    const USE_REAL_API = true;
+    const API_URL = 'https://api.wheretheiss.at/v1/satellites/25544';
+    const UPDATE_INTERVAL_MS = 3000;
+    const MAX_PATH_POINTS = 300;
+
+    // DOM
+    const statusText = document.getElementById('statusText');
+    const latEl = document.getElementById('lat');
+    const lonEl = document.getElementById('lon');
+    const altEl = document.getElementById('alt');
+    const velEl = document.getElementById('vel');
+    const regionEl = document.getElementById('region');
+    const updatedAtEl = document.getElementById('updatedAt');
+    const themeBtn = document.getElementById('toggleTheme');
+    const themeLabel = document.getElementById('themeLabel');
+    const centerBtn = document.getElementById('centerMap');
+
+    // State
+    let map, issMarker, issPath;
+    let pathCoords = [];
+    let currentISS = { lat:0, lon:0, alt:408, velocity:0, timestamp:Date.now()/1000 };
+    let globe = { scene:null, camera:null, renderer:null, earth:null, issMesh:null, orbitLine:null, path:[] };
+    let darkTiles = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    let lightTiles = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    let tileLayer;
+
+    // Theme toggle
+    function setTheme(theme){
+      document.body.setAttribute('data-theme', theme);
+      themeLabel.textContent = theme === 'dark' ? 'Oscuro' : 'Claro';
+      // swap tile layer
+      if (tileLayer) tileLayer.remove();
+      tileLayer = L.tileLayer(theme === 'dark' ? darkTiles : lightTiles, { maxZoom:19 }).addTo(map);
+    }
+    themeBtn.addEventListener('click', ()=>{
+      const current = document.body.getAttribute('data-theme') || 'dark';
+      setTheme(current === 'dark' ? 'light' : 'dark');
+    });
+
+    // Init map
+    function initMap(){
+      map = L.map('map', { zoomControl:false, attributionControl:false }).setView([0,0], 2);
+      tileLayer = L.tileLayer(darkTiles, { maxZoom:19 }).addTo(map);
+      L.control.zoom({ position:'bottomright' }).addTo(map);
+      L.control.attribution({ position:'bottomleft', prefix:false }).addTo(map).addAttribution('© CARTO © OpenStreetMap');
+
+      const issIcon = L.divIcon({ className:'iss-marker', html:'<div class="iss-marker-ui">🛰️</div>', iconSize:[40,40], iconAnchor:[20,20] });
+      issMarker = L.marker([0,0], { icon: issIcon }).addTo(map);
+      issMarker.bindPopup('<strong>Estación Espacial Internacional</strong>').openPopup();
+
+      issPath = L.polyline([], { color:'#4facfe', weight:2, opacity:0.85 }).addTo(map);
+
+      centerBtn.addEventListener('click', ()=>{
+        if (map && currentISS) map.setView([currentISS.lat, currentISS.lon], 3);
+      });
+    }
+
+    // Globe init with texture
+    function initGlobe(){
+      const canvas = document.getElementById('globe-canvas');
+      const parent = canvas.parentElement;
+      const w = parent.offsetWidth, h = parent.offsetHeight;
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(45, w/h, 0.1, 1000);
+      camera.position.set(0,0,3);
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+      renderer.setSize(w,h);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+      renderer.setClearColor(0x000000, 0);
+
+      // Earth using external texture (public CDN)
+      const loader = new THREE.TextureLoader();
+      const earthTextureURL = 'https://raw.githubusercontent.com/ajaybhatt07/planet-textures/main/2k_earth_daymap.jpg';
+      loader.crossOrigin = '';
+      loader.load(earthTextureURL, (texture) => {
+        const geo = new THREE.SphereGeometry(1, 64, 64);
+        const mat = new THREE.MeshPhongMaterial({ map: texture, shininess:1 });
+        const earth = new THREE.Mesh(geo, mat);
+        scene.add(earth);
+        globe.earth = earth;
+      }, undefined, (err)=>{
+        console.warn('No se pudo cargar textura, fallback simple.');
+        const geo = new THREE.SphereGeometry(1, 64, 64);
+        const mat = new THREE.MeshPhongMaterial({ color:0x2b5b86, shininess:1 });
+        const earth = new THREE.Mesh(geo, mat);
+        scene.add(earth);
+        globe.earth = earth;
+      });
+
+      // Atmosphere
+      const atmosphere = new THREE.Mesh(new THREE.SphereGeometry(1.03,32,32), new THREE.MeshBasicMaterial({ color:0x4db5ff, transparent:true, opacity:0.06, side:THREE.BackSide }));
+      scene.add(atmosphere);
+
+      // ISS mesh
+      const issMesh = new THREE.Mesh(new THREE.SphereGeometry(0.02, 12, 12), new THREE.MeshBasicMaterial({ color:0x4facfe, emissive:0x4facfe, emissiveIntensity:0.6 }));
+      scene.add(issMesh);
+      globe.issMesh = issMesh;
+
+      // Orbit line
+      const orbitMat = new THREE.LineBasicMaterial({ color:0x4facfe, transparent:true, opacity:0.6 });
+      const orbitGeom = new THREE.BufferGeometry();
+      const orbitLine = new THREE.Line(orbitGeom, orbitMat);
+      scene.add(orbitLine);
+      globe.orbitLine = orbitLine;
+
+      // Lights
+      scene.add(new THREE.AmbientLight(0x666666, 0.6));
+      const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(5,3,5); scene.add(sun);
+
+      globe.scene = scene; globe.camera = camera; globe.renderer = renderer; globe.path = [];
+
+      function render(){
+        requestAnimationFrame(render);
+        if (globe.earth) globe.earth.rotation.y += 0.0009;
+        updateGlobePositions();
+        renderer.render(scene, camera);
+      }
+      render();
+    }
+
+    // Convert lat/lon to 3D position (matches Earth texture orientation)
+    function latLonToCartesian(lat, lon, radius=1.15){
+      const phi = (90 - lat) * Math.PI/180;
+      const theta = (lon + 180) * Math.PI/180;
+      const x = - (radius * Math.sin(phi) * Math.cos(theta));
+      const z = radius * Math.sin(phi) * Math.sin(theta);
+      const y = radius * Math.cos(phi);
+      return { x, y, z };
+    }
+
+    function updateGlobePositions(){
+      if (!globe.issMesh || !currentISS) return;
+      const pos = latLonToCartesian(currentISS.lat, currentISS.lon, 1.15);
+      globe.issMesh.position.set(pos.x, pos.y, pos.z);
+      // push path
+      globe.path.push(new THREE.Vector3(pos.x, pos.y, pos.z));
+      if (globe.path.length > MAX_PATH_POINTS) globe.path.shift();
+      if (globe.path.length > 1){
+        const positions = new Float32Array(globe.path.length * 3);
+        globe.path.forEach((p,i)=>{ positions[i*3]=p.x; positions[i*3+1]=p.y; positions[i*3+2]=p.z; });
+        globe.orbitLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        globe.orbitLine.geometry.computeBoundingSphere();
+      }
+    }
+
+    // Fetch real or simulate
+    async function fetchRealISS(){
+      const res = await fetch(API_URL, { cache:'no-cache' });
+      if (!res.ok) throw new Error('API error');
+      const d = await res.json();
+      return { lat:Number(d.latitude), lon:Number(d.longitude), alt:Number(d.altitude), velocity:Number(d.velocity), timestamp:Number(d.timestamp) };
+    }
+    function simulateISS(offset=0){
+      const now = Date.now() + offset;
+      const orbitPeriod = 93 * 60 * 1000;
+      const t = (now % orbitPeriod) / orbitPeriod;
+      const inclination = 51.6 * Math.PI/180;
+      const orbitAngle = t * 2 * Math.PI;
+      const earthRot = now * (2*Math.PI / (24*60*60*1000));
+      const lat = Math.asin(Math.sin(inclination) * Math.sin(orbitAngle)) * 180/Math.PI;
+      let lon = ((orbitAngle + earthRot) * 180/Math.PI) % 360;
+      if (lon > 180) lon -= 360;
+      const alt = 408 + Math.sin(orbitAngle * 3) * 8;
+      const vel = 27600 + Math.cos(orbitAngle*2) * 150;
+      return { lat, lon, alt, velocity:vel, timestamp:Math.floor(now/1000) };
+    }
+
+    async function updatePosition(){
+      let data;
+      try{
+        if (USE_REAL_API){
+          data = await fetchRealISS();
+          statusText.textContent = 'API en vivo';
+        } else {
+          data = simulateISS();
+          statusText.textContent = 'Simulación';
+        }
+      }catch(err){
+        // fallback to simulation
+        data = simulateISS();
+        statusText.textContent = 'Simulación (API no disponible)';
+      }
+      applyPosition(data);
+      // also compute and draw a short predicted track (next N points) for the map
+      drawPredictedTrack();
+    }
+
+    function applyPosition(d){
+      currentISS = { lat:d.lat, lon:d.lon, alt:d.alt, velocity:d.velocity, timestamp:d.timestamp };
+      // map marker + path
+      if (issMarker) issMarker.setLatLng([d.lat, d.lon]);
+      pathCoords.push([d.lat, d.lon]);
+      if (pathCoords.length > MAX_PATH_POINTS) pathCoords.shift();
+      if (issPath) issPath.setLatLngs(pathCoords);
+      // center map gently
+      try{ if (map && !map._isInteracting) map.panTo([d.lat, d.lon], { animate:true, duration:0.9 }); }catch(e){}
+      // update right panel
+      latEl.textContent = d.lat.toFixed(4) + '°';
+      lonEl.textContent = d.lon.toFixed(4) + '°';
+      altEl.textContent = d.alt.toFixed(1) + ' km';
+      velEl.textContent = Math.round(d.velocity).toLocaleString() + ' km/h';
+      regionEl.textContent = determineRegion(d.lat, d.lon);
+      updatedAtEl.textContent = 'Actualizado: ' + new Date(d.timestamp*1000).toLocaleString();
+    }
+
+    // Draw predicted short track (next ~15 minutes) on map using simulate function
+    let predictedLayer = null;
+    function drawPredictedTrack(){
+      const pts = [];
+      const now = Date.now();
+      for (let i=0;i<20;i++){
+        const fut = simulateISS(i * 60 * 1000); // each point 1 min ahead
+        pts.push([fut.lat, fut.lon]);
+      }
+      if (predictedLayer) predictedLayer.remove();
+      predictedLayer = L.polyline(pts, { color:'#ffd166', weight:2, opacity:0.9, dashArray:'4,6' }).addTo(map);
+      // remove after a while to avoid clutter
+      setTimeout(()=>{ if (predictedLayer) { predictedLayer.remove(); predictedLayer = null; } }, UPDATE_INTERVAL_MS*4);
+    }
+
+    function determineRegion(lat, lon){
+      if (lon < -180) lon += 360;
+      if (lon > 180) lon -= 360;
+      const regions = [
+        { name:"Océano Pacífico Norte", latMin:0, latMax:60, lonMin:-180, lonMax:-120 },
+        { name:"Océano Pacífico Sur", latMin:-60, latMax:0, lonMin:-180, lonMax:-120 },
+        { name:"Océano Atlántico Norte", latMin:0, latMax:60, lonMin:-60, lonMax:0 },
+        { name:"Océano Atlántico Sur", latMin:-60, latMax:0, lonMin:-60, lonMax:0 },
+        { name:"Estados Unidos", latMin:25, latMax:49, lonMin:-125, lonMax:-66 },
+        { name:"Canadá", latMin:42, latMax:70, lonMin:-141, lonMax:-52 },
+        { name:"México", latMin:14, latMax:32, lonMin:-118, lonMax:-86 },
+        { name:"Brasil", latMin:-34, latMax:5, lonMin:-74, lonMax:-35 },
+        { name:"Europa", latMin:36, latMax:71, lonMin:-10, lonMax:40 },
+        { name:"Rusia / Central Asia", latMin:41, latMax:82, lonMin:20, lonMax:180 },
+        { name:"China / Asia", latMin:18, latMax:54, lonMin:73, lonMax:135 },
+        { name:"Australia", latMin:-44, latMax:-10, lonMin:113, lonMax:154 },
+        { name:"África", latMin:-35, latMax:37, lonMin:-18, lonMax:52 },
+        { name:"India / Sur Asia", latMin:6, latMax:37, lonMin:68, lonMax:97 },
+        { name:"Océano Índico", latMin:-60, latMax:30, lonMin:20, lonMax:147 },
+        { name:"Antártida", latMin:-90, latMax:-60, lonMin:-180, lonMax:180 },
+        { name:"Ártico", latMin:66, latMax:90, lonMin:-180, lonMax:180 }
+      ];
+      for (const r of regions) if (lat>=r.latMin && lat<=r.latMax && lon>=r.lonMin && lon<=r.lonMax) return r.name;
+      return lat>0 ? 'Hemisferio Norte' : 'Hemisferio Sur';
+    }
+
+    // Resize handling
+    function onResize(){
+      if (globe.renderer && globe.camera){
+        const canvas = globe.renderer.domElement;
+        const parent = canvas.parentElement;
+        globe.camera.aspect = parent.offsetWidth / parent.offsetHeight;
+        globe.camera.updateProjectionMatrix();
+        globe.renderer.setSize(parent.offsetWidth, parent.offsetHeight);
+        globe.renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+      }
+      if (map) map.invalidateSize();
+    }
+    window.addEventListener('resize', onResize);
+
+    // Start app
+    function start(){
+      initMap();
+      initGlobe();
+      updatePosition();
+      setInterval(updatePosition, UPDATE_INTERVAL_MS);
+      map.on('mousedown touchstart', ()=>map._isInteracting=true);
+      map.on('mouseup touchend', ()=>setTimeout(()=>map._isInteracting=false,700));
+      themeBtn.addEventListener('click', ()=>{
+        const t = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        document.body.setAttribute('data-theme', t);
+        setTheme(t);
+      });
+      // initial theme tile
+      setTimeout(()=>setTheme('dark'), 200);
+    }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+
+  })();
+  </script>
+</body>
+</html>
